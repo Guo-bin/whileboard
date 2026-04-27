@@ -1,4 +1,9 @@
-import type { WhiteboardElement, LineElement, RectElement, TextElement } from "./types";
+import type {
+  WhiteboardElement,
+  LineElement,
+  RectElement,
+  TextElement,
+} from "./types";
 
 type SetupCanvasOptions = {
   width: number;
@@ -12,11 +17,9 @@ export function setupCanvas(
   const { width, height } = options;
   const dpr = window.devicePixelRatio || 1;
 
-  // 畫布真實像素大小
   canvas.width = Math.floor(width * dpr);
   canvas.height = Math.floor(height * dpr);
 
-  // 畫布顯示大小
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
 
@@ -26,7 +29,6 @@ export function setupCanvas(
     throw new Error("Failed to get 2D context from canvas.");
   }
 
-  // 把座標系縮放回 CSS 像素
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   return ctx;
@@ -39,7 +41,6 @@ export function clearCanvas(
 ) {
   ctx.clearRect(0, 0, width, height);
 
-  // 先鋪白底，避免透明背景之後不好觀察
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
 }
@@ -48,25 +49,37 @@ export function renderElements(
   ctx: CanvasRenderingContext2D,
   elements: WhiteboardElement[],
   width: number,
-  height: number
+  height: number,
+  draftElement?: WhiteboardElement | null
 ) {
   clearCanvas(ctx, width, height);
 
   for (const element of elements) {
-    switch (element.type) {
-      case "line":
-        drawLine(ctx, element);
-        break;
-      case "rect":
-        drawRect(ctx, element);
-        break;
-      case "text":
-        drawText(ctx, element);
-        break;
-      default: {
-        const exhaustiveCheck: never = element;
-        throw new Error(`Unknown element type: ${JSON.stringify(exhaustiveCheck)}`);
-      }
+    drawElement(ctx, element);
+  }
+
+  if (draftElement) {
+    drawElement(ctx, draftElement);
+  }
+}
+
+function drawElement(
+  ctx: CanvasRenderingContext2D,
+  element: WhiteboardElement
+) {
+  switch (element.type) {
+    case "line":
+      drawLine(ctx, element);
+      break;
+    case "rect":
+      drawRect(ctx, element);
+      break;
+    case "text":
+      drawText(ctx, element);
+      break;
+    default: {
+      const exhaustiveCheck: never = element;
+      throw new Error(`Unknown element type: ${JSON.stringify(exhaustiveCheck)}`);
     }
   }
 }

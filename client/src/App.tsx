@@ -1,53 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { renderElements, setupCanvas } from "./renderer";
-import type { WhiteboardElement } from "./types";
+import type { LineElement, Point, WhiteboardElement } from "./types";
 
 const CANVAS_WIDTH = 1000;
 const CANVAS_HEIGHT = 700;
 
-function createDemoElements(): WhiteboardElement[] {
-  const now = Date.now();
+const LOCAL_USER_ID = "local-user";
 
-  return [
-    {
-      id: "line-1",
-      type: "line",
-      points: [
-        { x: 80, y: 80 },
-        { x: 140, y: 110 },
-        { x: 200, y: 90 },
-        { x: 260, y: 150 },
-      ],
-      stroke: "#2563eb",
-      strokeWidth: 4,
-      createdBy: "local-user",
-      createdAt: now,
-    },
-    {
-      id: "rect-1",
-      type: "rect",
-      x: 320,
-      y: 120,
-      width: 180,
-      height: 100,
-      stroke: "#111827",
-      strokeWidth: 3,
-      fill: "#fef3c7",
-      createdBy: "local-user",
-      createdAt: now + 1,
-    },
-    {
-      id: "text-1",
-      type: "text",
-      x: 80,
-      y: 220,
-      text: "Day 1: elements[] -> render()",
-      color: "#111827",
-      fontSize: 28,
-      createdBy: "local-user",
-      createdAt: now + 2,
-    },
-  ];
+function createLineElement(points: Point[]): LineElement {
+  return {
+    id: crypto.randomUUID(),
+    type: "line",
+    points,
+    stroke: "#2563eb",
+    strokeWidth: 4,
+    createdBy: LOCAL_USER_ID,
+    createdAt: Date.now(),
+  };
+}
+
+function getCanvasPoint(
+  event: React.PointerEvent<HTMLCanvasElement>,
+  canvas: HTMLCanvasElement
+): Point {
+  const rect = canvas.getBoundingClientRect();
+
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
 }
 
 export default function App() {
@@ -55,8 +36,7 @@ export default function App() {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   const [elements, setElements] = useState<WhiteboardElement[]>([]);
-
-  const demoElements = useMemo(() => createDemoElements(), []);
+  const [draftElement, setDraftElement] = useState<LineElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -68,22 +48,75 @@ export default function App() {
     });
 
     ctxRef.current = ctx;
-    renderElements(ctx, elements, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    renderElements(
+      ctx,
+      elements,
+      CANVAS_WIDTH,
+      CANVAS_HEIGHT,
+      draftElement
+    );
   }, []);
 
   useEffect(() => {
     const ctx = ctxRef.current;
     if (!ctx) return;
 
-    renderElements(ctx, elements, CANVAS_WIDTH, CANVAS_HEIGHT);
-  }, [elements]);
+    renderElements(
+      ctx,
+      elements,
+      CANVAS_WIDTH,
+      CANVAS_HEIGHT,
+      draftElement
+    );
+  }, [elements, draftElement]);
 
-  const handleLoadDemo = () => {
-    setElements(demoElements);
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+
+    const point = getCanvasPoint(event, canvas);
+
+    const line = createLineElement([point, point]);
+
+    setDraftElement(line);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    setDraftElement((currentDraft) => {
+      if (!currentDraft) return null;
+
+      const point = getCanvasPoint(event, canvas);
+
+      return {
+        ...currentDraft,
+        points: [...currentDraft.points, point],
+      };
+    });
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.releasePointerCapture(event.pointerId);
+
+    setDraftElement((currentDraft) => {
+      if (!currentDraft) return null;
+
+      setElements((currentElements) => [...currentElements, currentDraft]);
+
+      return null;
+    });
   };
 
   const handleClear = () => {
     setElements([]);
+    setDraftElement(null);
   };
 
   return (
@@ -109,7 +142,7 @@ export default function App() {
             color: "#111827",
           }}
         >
-          Whiteboard Stage 0 - Day 1
+          Whiteboard Stage 0 - Day 2
         </h1>
 
         <div
@@ -119,19 +152,6 @@ export default function App() {
             marginBottom: "16px",
           }}
         >
-          <button
-            onClick={handleLoadDemo}
-            style={{
-              padding: "10px 14px",
-              border: "1px solid #d1d5db",
-              borderRadius: "8px",
-              background: "#000000",
-              cursor: "pointer",
-            }}
-          >
-            載入假資料
-          </button>
-
           <button
             onClick={handleClear}
             style={{
@@ -155,7 +175,19 @@ export default function App() {
             boxShadow: "0 4px 14px rgba(0, 0, 0, 0.06)",
           }}
         >
-          <canvas ref={canvasRef} />
+          <canvas
+            ref={canvasRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            width={CANVAS_WIDTH}
+            height={CANVAS_HEIGHT}
+            style={{
+              display: "block",
+              touchAction: "none",
+              cursor: "crosshair",
+            }}
+          />
         </div>
 
         <p
@@ -165,7 +197,7 @@ export default function App() {
             fontSize: "14px",
           }}
         >
-          今天先確認：資料存在 elements[]，canvas 只是 render 結果。
+          Day 2：滑鼠拖曳時產生 draft line，放開後提交到 elements[]。
         </p>
       </div>
     </div>
