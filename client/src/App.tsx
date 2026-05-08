@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { renderElements, setupCanvas } from "./renderer";
 import type {
+  ClientToServerMessage,
   LineElement,
   Point,
   RectElement,
+  ServerToClientMessage,
   TextElement,
   WhiteboardElement,
 } from "./types";
@@ -11,25 +13,30 @@ import type {
 const CANVAS_WIDTH = 1000;
 const CANVAS_HEIGHT = 700;
 
-const LOCAL_USER_ID = "local-user";
+const ROOM_ID =
+  new URLSearchParams(window.location.search).get("roomId") ?? "default-room";
 
 type Tool = "line" | "rect" | "text";
 
 type DraftElement = LineElement | RectElement | null;
 
-function createLineElement(points: Point[]): LineElement {
+function createLineElement(points: Point[], clientId: string): LineElement {
   return {
     id: crypto.randomUUID(),
     type: "line",
     points,
     stroke: "#2563eb",
     strokeWidth: 4,
-    createdBy: LOCAL_USER_ID,
+    createdBy: clientId,
     createdAt: Date.now(),
   };
 }
 
-function createRectElement(start: Point, current: Point): RectElement {
+function createRectElement(
+  start: Point,
+  current: Point,
+  clientId: string
+): RectElement {
   const x = Math.min(start.x, current.x);
   const y = Math.min(start.y, current.y);
   const width = Math.abs(current.x - start.x);
@@ -45,12 +52,16 @@ function createRectElement(start: Point, current: Point): RectElement {
     stroke: "#111827",
     strokeWidth: 3,
     fill: "#fef3c7",
-    createdBy: LOCAL_USER_ID,
+    createdBy: clientId,
     createdAt: Date.now(),
   };
 }
 
-function createTextElement(point: Point, text: string): TextElement {
+function createTextElement(
+  point: Point,
+  text: string,
+  clientId: string
+): TextElement {
   return {
     id: crypto.randomUUID(),
     type: "text",
@@ -59,7 +70,7 @@ function createTextElement(point: Point, text: string): TextElement {
     text,
     color: "#111827",
     fontSize: 24,
-    createdBy: LOCAL_USER_ID,
+    createdBy: clientId,
     createdAt: Date.now(),
   };
 }
@@ -81,16 +92,26 @@ function isValidRect(rect: RectElement): boolean {
 }
 
 function isValidLine(line: LineElement): boolean {
-  return line.points.length >= 2;
+  if (line.points.length < 2) return false;
+
+  const firstPoint = line.points[0];
+  const lastPoint = line.points[line.points.length - 1];
+
+  const dx = lastPoint.x - firstPoint.x;
+  const dy = lastPoint.y - firstPoint.y;
+
+  return Math.sqrt(dx * dx + dy * dy) >= 3;
 }
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-
+  const wsRef = useRef<WebSocket | null>(null);
   const dragStartPointRef = useRef<Point | null>(null);
+  const [clientId] = useState(() => crypto.randomUUID());
 
   const [activeTool, setActiveTool] = useState<Tool>("line");
+  const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [elements, setElements] = useState<WhiteboardElement[]>([]);
   const [draftElement, setDraftElement] = useState<DraftElement>(null);
 
@@ -104,14 +125,6 @@ export default function App() {
     });
 
     ctxRef.current = ctx;
-
-    renderElements(
-      ctx,
-      elements,
-      CANVAS_WIDTH,
-      CANVAS_HEIGHT,
-      draftElement
-    );
   }, []);
 
   useEffect(() => {
@@ -126,6 +139,91 @@ export default function App() {
       draftElement
     );
   }, [elements, draftElement]);
+  const sendMessage = (message: ClientToServerMessage) => {
+    const ws = wsRef.current;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket is not connected.");
+      return;
+    }
+
+    ws.send(JSON.stringify(message));
+  };
+  useEffect(() => {
+    const ws = new WebSocket("ws://localhost:8080");
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnectionStatus("connected");
+
+      sendMessage({
+        type: "join_room",
+        roomId: ROOM_ID,
+        clientId,
+      });
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data) as ServerToClientMessage;
+
+      if (message.type === "room_snapshot") {
+        setElements(message.elements);
+        return;
+      }
+
+      if (message.type === "element_created") {
+        if (message.clientId === clientId) return;
+
+        setElements((currentElements) => {
+          const alreadyExists = currentElements.some(
+            (element) => element.id === message.element.id
+          );
+
+          if (alreadyExists) return currentElements;
+
+          return [...currentElements, message.element];
+        });
+
+        return;
+      }
+      if (message.type === "room_cleared") {
+        if (message.clientId === clientId) return;
+
+        setElements([]);
+        setDraftElement(null);
+        dragStartPointRef.current = null;
+        return;
+      }
+      if (message.type === "error") {
+        console.error(message.message);
+      }
+    };
+
+    ws.onclose = () => {
+      setConnectionStatus("disconnected");
+    };
+
+    ws.onerror = () => {
+      setConnectionStatus("error");
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [clientId]);
+
+
+
+  const commitElement = (element: WhiteboardElement) => {
+    setElements((currentElements) => [...currentElements, element]);
+
+    sendMessage({
+      type: "create_element",
+      roomId: ROOM_ID,
+      clientId,
+      element,
+    });
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -140,9 +238,8 @@ export default function App() {
         return;
       }
 
-      const textElement = createTextElement(point, text.trim());
-
-      setElements((currentElements) => [...currentElements, textElement]);
+      const textElement = createTextElement(point, text.trim(), clientId);
+      commitElement(textElement);
       return;
     }
 
@@ -150,13 +247,13 @@ export default function App() {
     dragStartPointRef.current = point;
 
     if (activeTool === "line") {
-      const line = createLineElement([point, point]);
+      const line = createLineElement([point, point], clientId);
       setDraftElement(line);
       return;
     }
 
     if (activeTool === "rect") {
-      const rect = createRectElement(point, point);
+      const rect = createRectElement(point, point, clientId);
       setDraftElement(rect);
     }
   };
@@ -183,7 +280,7 @@ export default function App() {
         if (!startPoint) return currentDraft;
 
         return {
-          ...createRectElement(startPoint, currentPoint),
+          ...createRectElement(startPoint, currentPoint, clientId),
           id: currentDraft.id,
           createdAt: currentDraft.createdAt,
         };
@@ -205,11 +302,11 @@ export default function App() {
       if (!currentDraft) return null;
 
       if (currentDraft.type === "line" && isValidLine(currentDraft)) {
-        setElements((currentElements) => [...currentElements, currentDraft]);
+        commitElement(currentDraft);
       }
 
       if (currentDraft.type === "rect" && isValidRect(currentDraft)) {
-        setElements((currentElements) => [...currentElements, currentDraft]);
+        commitElement(currentDraft);
       }
 
       return null;
@@ -233,8 +330,13 @@ export default function App() {
     setElements([]);
     setDraftElement(null);
     dragStartPointRef.current = null;
-  };
 
+    sendMessage({
+      type: "clear_room",
+      roomId: ROOM_ID,
+      clientId,
+    });
+  };
   const getToolButtonStyle = (tool: Tool): React.CSSProperties => {
     const isActive = activeTool === tool;
 
@@ -271,7 +373,7 @@ export default function App() {
             color: "#111827",
           }}
         >
-          Whiteboard Stage 0 - Day 3
+          Whiteboard Stage 0 - Day 4
         </h1>
 
         <div
@@ -280,6 +382,7 @@ export default function App() {
             gap: "12px",
             marginBottom: "16px",
             alignItems: "center",
+            flexWrap: "wrap",
           }}
         >
           <button
@@ -314,16 +417,19 @@ export default function App() {
               marginLeft: "12px",
             }}
           >
-            清空
+            清空白板
           </button>
 
-          <span
-            style={{
-              color: "#4b5563",
-              fontSize: "14px",
-            }}
-          >
-            Current tool: {activeTool}
+          <span style={{ color: "#4b5563", fontSize: "14px" }}>
+            Room: {ROOM_ID}
+          </span>
+
+          <span style={{ color: "#4b5563", fontSize: "14px" }}>
+            Status: {connectionStatus}
+          </span>
+
+          <span style={{ color: "#4b5563", fontSize: "14px" }}>
+            Elements: {elements.length}
           </span>
         </div>
 
@@ -359,8 +465,8 @@ export default function App() {
             fontSize: "14px",
           }}
         >
-          Day 3：Line / Rect 使用 draftElement，Text 點擊後直接 committed 到
-          elements[]。
+          Day 4：前端送 create_element，server 存進 room memory，
+          其他分頁透過 element_created 同步。
         </p>
       </div>
     </div>
