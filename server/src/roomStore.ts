@@ -1,35 +1,52 @@
-import type WebSocket from "ws";
-import type { WhiteboardElement, ServerToClientMessage } from "./types.js";
+import { WebSocket } from "ws";
 
-type AppWebSocket = WebSocket & {
+import type { ServerToClientMessage, WhiteboardElement } from "./types";
+
+export type RoomWebSocket = WebSocket & {
+  clientId?: string;
   roomId?: string;
 };
 
 type Room = {
   elements: WhiteboardElement[];
-  clients: Set<AppWebSocket>;
+  clients: Set<RoomWebSocket>;
+  version: number;
+  processedOps: Set<string>;
+};
+
+type RoomMutationResult = {
+  applied: boolean;
+  version: number;
 };
 
 const rooms = new Map<string, Room>();
 
 function getOrCreateRoom(roomId: string): Room {
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      elements: [],
-      clients: new Set(),
-    });
+  const existingRoom = rooms.get(roomId);
+
+  if (existingRoom) {
+    return existingRoom;
   }
 
-  return rooms.get(roomId)!;
+  const room: Room = {
+    elements: [],
+    clients: new Set(),
+    version: 0,
+    processedOps: new Set(),
+  };
+
+  rooms.set(roomId, room);
+
+  return room;
 }
 
-export function addClientToRoom(roomId: string, ws: AppWebSocket): void {
+export function addClientToRoom(roomId: string, ws: RoomWebSocket): void {
   const room = getOrCreateRoom(roomId);
   room.clients.add(ws);
   ws.roomId = roomId;
 }
 
-export function removeClientFromRoom(ws: AppWebSocket): void {
+export function removeClientFromRoom(ws: RoomWebSocket): void {
   const roomId = ws.roomId;
 
   if (!roomId) return;
@@ -41,27 +58,61 @@ export function removeClientFromRoom(ws: AppWebSocket): void {
   room.clients.delete(ws);
 }
 
-export function addElementToRoom(
+export function getRoomSnapshot(roomId: string): Pick<Room, "version" | "elements"> {
+  const room = getOrCreateRoom(roomId);
+
+  return {
+    version: room.version,
+    elements: room.elements,
+  };
+}
+
+export function applyCreateElement(
   roomId: string,
+  opId: string,
   element: WhiteboardElement
-): void {
+): RoomMutationResult {
   const room = getOrCreateRoom(roomId);
+
+  if (room.processedOps.has(opId)) {
+    return {
+      applied: false,
+      version: room.version,
+    };
+  }
+
+  room.processedOps.add(opId);
   room.elements.push(element);
+  room.version += 1;
+
+  return {
+    applied: true,
+    version: room.version,
+  };
 }
 
-export function clearRoom(roomId: string): void {
+export function applyClearRoom(roomId: string, opId: string): RoomMutationResult {
   const room = getOrCreateRoom(roomId);
+
+  if (room.processedOps.has(opId)) {
+    return {
+      applied: false,
+      version: room.version,
+    };
+  }
+
+  room.processedOps.add(opId);
   room.elements = [];
+  room.version += 1;
+
+  return {
+    applied: true,
+    version: room.version,
+  };
 }
 
-export function getRoomSnapshot(roomId: string): WhiteboardElement[] {
-  const room = getOrCreateRoom(roomId);
-  return room.elements;
-}
-
-export function broadcastToRoomExceptSender(
+export function broadcastToRoom(
   roomId: string,
-  senderWs: AppWebSocket,
   message: ServerToClientMessage
 ): void {
   const room = rooms.get(roomId);
@@ -71,9 +122,7 @@ export function broadcastToRoomExceptSender(
   const payload = JSON.stringify(message);
 
   for (const client of room.clients) {
-    if (client === senderWs) continue;
-
-    if (client.readyState === client.OPEN) {
+    if (client.readyState === WebSocket.OPEN) {
       client.send(payload);
     }
   }

@@ -51,30 +51,37 @@ export type ClientToServerMessage =
       type: "create_element";
       roomId: string;
       clientId: string;
+      opId: string;
       element: WhiteboardElement;
     }
   | {
       type: "clear_room";
       roomId: string;
       clientId: string;
+      opId: string;
     };
 
 export type ServerToClientMessage =
   | {
       type: "room_snapshot";
       roomId: string;
+      version: number;
       elements: WhiteboardElement[];
     }
   | {
       type: "element_created";
       roomId: string;
       clientId: string;
+      opId: string;
+      version: number;
       element: WhiteboardElement;
     }
   | {
       type: "room_cleared";
       roomId: string;
       clientId: string;
+      opId: string;
+      version: number;
     }
   | {
       type: "error";

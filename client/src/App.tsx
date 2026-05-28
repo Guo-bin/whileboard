@@ -109,7 +109,10 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const dragStartPointRef = useRef<Point | null>(null);
   const [clientId] = useState(() => crypto.randomUUID());
+  const appliedOpIdsRef = useRef(new Set<string>());
+  const lastAppliedVersionRef = useRef(0);
 
+  const [snapshotReady, setSnapshotReady] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("line");
   const [connectionStatus, setConnectionStatus] = useState("connecting");
   const [elements, setElements] = useState<WhiteboardElement[]>([]);
@@ -155,24 +158,38 @@ export default function App() {
 
     ws.onopen = () => {
       setConnectionStatus("connected");
-
+      setSnapshotReady(false);
       sendMessage({
         type: "join_room",
         roomId: ROOM_ID,
         clientId,
       });
     };
-
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerToClientMessage;
 
       if (message.type === "room_snapshot") {
+        if (message.version < lastAppliedVersionRef.current) {
+          return;
+        }
+
+        lastAppliedVersionRef.current = message.version;
         setElements(message.elements);
+        setSnapshotReady(true);
         return;
       }
 
       if (message.type === "element_created") {
-        if (message.clientId === clientId) return;
+        lastAppliedVersionRef.current = Math.max(
+          lastAppliedVersionRef.current,
+          message.version
+        );
+
+        if (appliedOpIdsRef.current.has(message.opId)) {
+          return;
+        }
+
+        appliedOpIdsRef.current.add(message.opId);
 
         setElements((currentElements) => {
           const alreadyExists = currentElements.some(
@@ -186,14 +203,25 @@ export default function App() {
 
         return;
       }
+
       if (message.type === "room_cleared") {
-        if (message.clientId === clientId) return;
+        lastAppliedVersionRef.current = Math.max(
+          lastAppliedVersionRef.current,
+          message.version
+        );
+
+        if (appliedOpIdsRef.current.has(message.opId)) {
+          return;
+        }
+
+        appliedOpIdsRef.current.add(message.opId);
 
         setElements([]);
         setDraftElement(null);
         dragStartPointRef.current = null;
         return;
       }
+
       if (message.type === "error") {
         console.error(message.message);
       }
@@ -215,17 +243,38 @@ export default function App() {
 
 
   const commitElement = (element: WhiteboardElement) => {
+    if (!snapshotReady) {
+      console.warn("Snapshot is not ready yet.");
+      return;
+    }
+
+    const ws = wsRef.current;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket is not connected.");
+      return;
+    }
+
+    const opId = crypto.randomUUID();
+
+    appliedOpIdsRef.current.add(opId);
+
     setElements((currentElements) => [...currentElements, element]);
 
     sendMessage({
       type: "create_element",
       roomId: ROOM_ID,
       clientId,
+      opId,
       element,
     });
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!snapshotReady) {
+      console.warn("Cannot draw before snapshot is ready.");
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -327,6 +376,22 @@ export default function App() {
   };
 
   const handleClear = () => {
+    if (!snapshotReady) {
+      console.warn("Snapshot is not ready yet.");
+      return;
+    }
+
+    const ws = wsRef.current;
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket is not connected.");
+      return;
+    }
+
+    const opId = crypto.randomUUID();
+
+    appliedOpIdsRef.current.add(opId);
+
     setElements([]);
     setDraftElement(null);
     dragStartPointRef.current = null;
@@ -335,6 +400,7 @@ export default function App() {
       type: "clear_room",
       roomId: ROOM_ID,
       clientId,
+      opId,
     });
   };
   const getToolButtonStyle = (tool: Tool): React.CSSProperties => {
@@ -419,7 +485,9 @@ export default function App() {
           >
             清空白板
           </button>
-
+          <span style={{ color: "#4b5563", fontSize: "14px" }}>
+            Snapshot: {snapshotReady ? "ready" : "loading"}
+          </span>
           <span style={{ color: "#4b5563", fontSize: "14px" }}>
             Room: {ROOM_ID}
           </span>
@@ -472,3 +540,6 @@ export default function App() {
     </div>
   );
 }
+
+
+
