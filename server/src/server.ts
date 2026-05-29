@@ -13,7 +13,7 @@ import {
 import type {
   ServerToClientMessage,
   WhiteboardElement,
-} from "./types";
+} from "@whiteboard/shared";
 
 type IncomingClientMessage = {
   type?: string;

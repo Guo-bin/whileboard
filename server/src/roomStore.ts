@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 
-import type { ServerToClientMessage, WhiteboardElement } from "./types";
+import type { ServerToClientMessage, WhiteboardElement } from "@whiteboard/shared";
 
 export type RoomWebSocket = WebSocket & {
   clientId?: string;

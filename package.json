@@ -1,0 +1,9 @@
+{
+  "name": "whiteboard-monorepo",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ]
+}

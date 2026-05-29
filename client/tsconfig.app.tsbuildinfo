@@ -1,1 +1,11 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/renderer.ts","./src/types.ts","./src/vite-env.d.ts"],"version":"6.0.2"}
+{
+  "root": [
+    "./src/app.tsx",
+    "./src/main.tsx",
+    "./src/renderer.ts",
+    "./src/vite-env.d.ts",
+    "./src/engine/drawing.ts",
+    "./src/hooks/usewhiteboard.ts"
+  ],
+  "version": "6.0.2"
+}

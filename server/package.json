@@ -9,6 +9,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@whiteboard/shared": "*",
     "ws": "^8.20.0"
   },
   "devDependencies": {

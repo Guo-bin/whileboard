@@ -3,7 +3,7 @@ import type {
   LineElement,
   RectElement,
   TextElement,
-} from "./types";
+} from "@whiteboard/shared";
 
 type SetupCanvasOptions = {
   width: number;
